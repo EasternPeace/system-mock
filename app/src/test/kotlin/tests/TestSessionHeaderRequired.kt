@@ -4,15 +4,15 @@ import com.github.tomakehurst.wiremock.client.WireMock.*
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.Test
-import tests.setup.BaseTest
+import se.strawberry.support.base.BaseApiTest
 
-class TestSessionHeaderRequired : BaseTest() {
+class TestSessionHeaderRequired : BaseApiTest() {
 
     @Test
     fun shouldRejectWhenSessionHeaderMissing() {
         val endpoint = "/api/test"
         val upstreamStatus = 200
-        upstream.stubFor(
+        servers.upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(
                     aResponse()
