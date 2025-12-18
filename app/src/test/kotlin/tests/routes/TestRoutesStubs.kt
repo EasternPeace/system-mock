@@ -12,11 +12,18 @@ import io.ktor.server.testing.*
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import se.strawberry.app.DependenciesKey
-import se.strawberry.app.mockGateway
+import se.strawberry.api.DependenciesKey
+import se.strawberry.api.mockGateway
+import se.strawberry.api.models.stub.CreateStubRequest
+import se.strawberry.api.models.stub.Ephemeral
+import se.strawberry.api.models.stub.ReqMatch
+import se.strawberry.api.models.stub.ReqMatchMethods
+import se.strawberry.api.models.stub.RespDef
+import se.strawberry.api.models.stub.RespMode
+import se.strawberry.api.models.stub.UrlMatch
+import se.strawberry.api.models.stub.UrlMatchType
 import se.strawberry.common.Headers
 import se.strawberry.common.Json
-import se.strawberry.domain.stub.*
 import se.strawberry.service.stub.StubService
 
 class StubsRoutesTest {
@@ -189,6 +196,10 @@ class StubsRoutesTest {
         override fun delete(id: String): Response {
             deleteCalls += id
             return Response.response().status(204).build()
+        }
+
+        override fun syncFromDb() {
+            // no-op for recording fake
         }
 
         private fun json(code: Int, body: String): Response =

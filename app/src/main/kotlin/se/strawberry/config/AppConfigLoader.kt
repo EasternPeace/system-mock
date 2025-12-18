@@ -24,9 +24,9 @@ object AppConfigLoader {
             "SERVICE_MAP is empty. Provide at least one 'name=url' pair, e.g. SERVICE_MAP=omni=http://127.0.0.1:5000"
         }
 
+        // DynamoDB config
         val dynamoEndpoint = URI(Env.string(EnvVar.DynamoEndpoint))
         val dynamoRegion = Env.string(EnvVar.AwsRegion)
-        val sessionsTable = Env.string(EnvVar.DynamoSessionsTable)
         val accessKeyId = Env.string(EnvVar.AwsAccessKeyId)
         val secretAccessKey = Env.string(EnvVar.AwsSecretAccessKey)
 
@@ -39,20 +39,18 @@ object AppConfigLoader {
             dynamo = DynamoConfig(
                 endpoint = dynamoEndpoint,
                 region = dynamoRegion,
-                sessionsTable = sessionsTable,
                 accessKeyId = accessKeyId,
                 secretAccessKey = secretAccessKey,
             )
         )
 
         log.info(
-            "AppConfig => port={}, bind={}, allowedPorts={}, services={}, dynamoEndpoint={}, dynamoRegion={}, sessionsTable={}",
+            "AppConfig => port={}, bind={}, allowedPorts={}, services={}, dynamoEndpoint={}, dynamoRegion={}",
             cfg.wireMockServerPort, cfg.hostAddress,
             cfg.allowedPorts.sorted().joinToString(","),
             cfg.services.keys.sorted().joinToString(","),
             cfg.dynamo.endpoint?.toString() ?: "(default)",
-            cfg.dynamo.region,
-            cfg.dynamo.sessionsTable,
+            cfg.dynamo.region
         )
 
         return cfg
@@ -75,7 +73,7 @@ object AppConfigLoader {
                 "SERVICE_MAP: entry #$idx '$p' must be 'name=url'"
             }
             val key = p.substring(0, eq).trim()
-            val url = p.substring(eq + 1).trim()
+            val url = p.substring(eq + 1).trim().removeSuffix("/")
             require(key.isNotEmpty()) { "SERVICE_MAP: empty service name in '$p'" }
             val uri = try { URI(url) } catch (e: Exception) {
                 throw IllegalArgumentException("SERVICE_MAP: invalid URL '$url' for key '$key'", e)

@@ -5,6 +5,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import se.strawberry.api.Endpoints
+import se.strawberry.api.models.sessions.SessionsCloseRequestModel
 import se.strawberry.common.Json
 
 /**
@@ -30,7 +32,7 @@ object SessionApi {
         ).toRequestBody(JSON)
 
         val req = Request.Builder()
-            .url("$apiBaseUrl/_proxy-api/sessions")
+            .url("$apiBaseUrl${Endpoints.Paths.SESSIONS}")
             .addHeader("Content-Type", "application/json")
             .post(body)
             .build()
@@ -47,7 +49,7 @@ object SessionApi {
         sessionId: String
     ): Response {
         val req = Request.Builder()
-            .url("$apiBaseUrl/_proxy-api/sessions/$sessionId")
+            .url("$apiBaseUrl${Endpoints.Paths.SESSIONS}/$sessionId")
             .get()
             .build()
 
@@ -55,16 +57,17 @@ object SessionApi {
     }
 
     /**
-     * Delete session by ID
+     * Close session by ID
      */
-    fun deleteSession(
+    fun closeSession(
         client: OkHttpClient,
         apiBaseUrl: String,
         sessionId: String
     ): Response {
+        val body = SessionsCloseRequestModel(sessionId).toJsonBody()
         val req = Request.Builder()
-            .url("$apiBaseUrl/_proxy-api/sessions/$sessionId")
-            .delete()
+            .url("$apiBaseUrl${Endpoints.Paths.SESSIONS}/close")
+            .patch(body)
             .build()
 
         return client.newCall(req).execute()

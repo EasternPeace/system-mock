@@ -6,7 +6,7 @@ import com.github.tomakehurst.wiremock.client.WireMock.*
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.Test
-import se.strawberry.domain.stub.Ephemeral
+import se.strawberry.api.models.stub.Ephemeral
 import stubs.Stubs
 import tests.setup.BaseTest
 import kotlin.random.Random
@@ -18,6 +18,11 @@ class TestEphemeralStubbing : BaseTest() {
     val endpoint = "/api/test"
     val stubStatus = 200
     val sessionId = "A-123"
+
+    @org.junit.jupiter.api.BeforeEach
+    fun createTestSession() {
+        createSession(sessionId)
+    }
 
     @Test
     @DecisionTableId("EPH_1")

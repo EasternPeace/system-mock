@@ -2,28 +2,27 @@ package se.strawberry.repository.stub
 
 /**
  * Repository boundary for stubs persisted in DB.
- * R1.3: interface only; implementations to arrive in R5.
  */
 interface StubRepository {
     data class Stub(
-        val id: String,
-        val sessionId: String?,
-        val name: String?,
-        val description: String?,
-        val requestMatcherJson: String, // JSON representation
-        val responseSpecJson: String,   // JSON representation
-        val wiremockMappingId: String?,
-        val enabled: Boolean = true,
+        val sessionId: String, // PK
+        val stubId: String,    // SK
+        val mappingJson: String,
         val createdAt: Long,
         val updatedAt: Long,
-    )
+        val expiresAt: Long?,
+        val usesLeft: Int?,
+        val status: Status
+    ) {
+        enum class Status { ACTIVE, EXHAUSTED, EXPIRED }
+    }
 
-    fun create(stub: Stub): Boolean
-    fun update(stub: Stub): Boolean
-    fun get(id: String): Stub?
+    fun save(stub: Stub)
+    fun get(sessionId: String, stubId: String): Stub?
     fun listBySession(sessionId: String): List<Stub>
-    fun enable(id: String): Boolean
-    fun disable(id: String): Boolean
-    fun delete(id: String): Boolean
+    fun delete(sessionId: String, stubId: String)
+    /** Look up a stub by its global ID using GSI. Useful for deletion without session context. */
+    fun findByStubId(stubId: String): Stub?
+    fun getAllActive(): List<Stub> // For startup sync (might need scan or GSI)
 }
 

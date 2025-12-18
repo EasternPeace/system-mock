@@ -5,7 +5,7 @@ import com.github.tomakehurst.wiremock.client.WireMock.*
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.Test
-import se.strawberry.domain.stub.Ephemeral
+import se.strawberry.api.models.stub.Ephemeral
 import stubs.Stubs
 import tests.setup.BaseTest
 import kotlin.random.Random
@@ -20,6 +20,7 @@ class TestStubbingOnlyWorksWithinTheSameSession : BaseTest() {
         val endpoint = "/api/test"
         val stubStatus = 200
         val sessionId = Random.hashCode().toString()
+        createSession(sessionId)
 
         upstream.stubFor(
             get(urlEqualTo(endpoint))
@@ -56,9 +57,9 @@ class TestStubbingOnlyWorksWithinTheSameSession : BaseTest() {
             assertThat(responseForCalWithKnownSession.code, equalTo(stubStatus))
             assertThat(responseForCalWithKnownSession.body.string(), equalTo(stubBody))
         }
+        // Unknown session should be rejected (Hardened Logic)
         call("unknown", endpoint).use { responseWithUnknownSession ->
-            assertThat(responseWithUnknownSession.code, equalTo(upstreamStatus))
-            assertThat(responseWithUnknownSession.body.string(), equalTo(upstreamBody))
+            assertThat(responseWithUnknownSession.code, equalTo(403))
         }
     }
 }

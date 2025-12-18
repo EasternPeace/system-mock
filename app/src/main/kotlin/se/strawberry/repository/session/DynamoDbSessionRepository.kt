@@ -1,5 +1,8 @@
+package se.strawberry.repository.session
+
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import se.strawberry.repository.RepositoryConstants.DYNAMO.SESSION_TABLE_NAME
 import se.strawberry.repository.session.SessionRepository
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue
@@ -9,17 +12,16 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest
 import software.amazon.awssdk.services.dynamodb.model.ReturnValue
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest
 
-class DynamoSessionRepository(
-    private val dynamo: DynamoDbClient,
-    private val sessionsTable: String,
+class DynamoDbSessionRepository(
+    private val dynamo: DynamoDbClient
 ) : SessionRepository {
 
-    private val log: Logger = LoggerFactory.getLogger(DynamoSessionRepository::class.java)
+    private val log: Logger = LoggerFactory.getLogger(DynamoDbSessionRepository::class.java)
 
     override fun create(session: SessionRepository.Session): Boolean {
         val item = toItem(session)
         val req = PutItemRequest.builder()
-            .tableName(sessionsTable)
+            .tableName(SESSION_TABLE_NAME)
             .item(item)
             .conditionExpression("attribute_not_exists(sessionId)")
             .build()
@@ -34,7 +36,7 @@ class DynamoSessionRepository(
 
     override fun get(id: String): SessionRepository.Session? {
         val req = GetItemRequest.builder()
-            .tableName(sessionsTable)
+            .tableName(SESSION_TABLE_NAME)
             .key(mapOf("sessionId" to AttributeValue.builder().s(id).build()))
             .consistentRead(true)
             .build()
@@ -46,7 +48,7 @@ class DynamoSessionRepository(
     override fun close(id: String): Boolean {
         val now = System.currentTimeMillis()
         val req = UpdateItemRequest.builder()
-            .tableName(sessionsTable)
+            .tableName(SESSION_TABLE_NAME)
             .key(mapOf("sessionId" to AttributeValue.builder().s(id).build()))
             .updateExpression("SET #st = :closed, closedAt = :closedAt")
             .conditionExpression("attribute_exists(sessionId)")

@@ -4,12 +4,13 @@ import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.common.Slf4jNotifier
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import io.github.cdimascio.dotenv.dotenv
-import io.ktor.server.engine.EmbeddedServer
-import io.ktor.server.netty.NettyApplicationEngine
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
 import org.junit.jupiter.api.*
+import org.junit.jupiter.api.extension.ExtendWith
 import org.testcontainers.containers.localstack.LocalStackContainer
 import org.testcontainers.containers.localstack.LocalStackContainer.Service
 import org.testcontainers.junit.jupiter.Container
@@ -18,11 +19,12 @@ import org.testcontainers.utility.DockerImageName
 import se.strawberry.app.KtorBootstrap
 import se.strawberry.app.ServerBootstrap
 import se.strawberry.app.buildDependencies
-import se.strawberry.common.Headers.X_MOCK_SESSION_ID
-import se.strawberry.common.Headers.X_MOCK_TARGET_SERVICE
 import se.strawberry.config.AppConfigLoader
 import se.strawberry.config.Env
 import se.strawberry.config.EnvVar
+import se.strawberry.repository.RepositoryConstants.DYNAMO.SESSION_TABLE_NAME
+import se.strawberry.repository.RepositoryConstants.DYNAMO.TRAFFIC_TABLE_NAME
+import se.strawberry.wiremock.listeners.TrafficCaptureListener
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.regions.Region
@@ -31,7 +33,6 @@ import software.amazon.awssdk.services.dynamodb.model.*
 import uk.org.webcompere.systemstubs.environment.EnvironmentVariables
 import uk.org.webcompere.systemstubs.jupiter.SystemStub
 import uk.org.webcompere.systemstubs.jupiter.SystemStubsExtension
-import org.junit.jupiter.api.extension.ExtendWith
 import java.util.concurrent.TimeUnit
 
 /**
@@ -61,6 +62,7 @@ abstract class BaseIntegrationTest {
     protected lateinit var http: OkHttpClient
     protected lateinit var upstreamServiceName: String
     protected lateinit var dynamoClient: DynamoDbClient
+    protected lateinit var deps: se.strawberry.app.AppDependencies
 
     @SystemStub
     protected val env = EnvironmentVariables()
@@ -106,11 +108,15 @@ abstract class BaseIntegrationTest {
         env.set(EnvVar.ServiceMap.key, "$upstreamServiceName=${upstreamBaseUrl()}")
 
         // Start proxy (WireMock ingress)
-        proxy = ServerBootstrap.start()
+        // Start proxy (WireMock ingress)
+        val cfg = AppConfigLoader.load()
+        deps = buildDependencies(cfg)
+        val appScope = CoroutineScope(Dispatchers.Default)
+        deps.trafficPersister.start(appScope)
+
+        proxy = ServerBootstrap.start(cfg, deps)
 
         // Start Ktor API
-        val cfg = AppConfigLoader.load()
-        val deps = buildDependencies(cfg)
         ktorApp = KtorBootstrap.start(cfg, deps)
     }
 
@@ -141,21 +147,19 @@ abstract class BaseIntegrationTest {
         }
     }
 
-    /**
-     * Make a proxied call to upstream service
-     */
-    protected fun call(sessionId: String?, endpoint: String): Response {
-        val req = Request.Builder()
-            .url("${proxyBaseUrl()}$endpoint")
-            .addHeader(X_MOCK_TARGET_SERVICE, upstreamServiceName)
-            .apply { if (sessionId != null) addHeader(X_MOCK_SESSION_ID, sessionId) }
-            .build()
-        return http.newCall(req).execute()
-    }
-
-    protected fun proxyBaseUrl(): String = "http://localhost:${proxy.port()}"
     protected fun upstreamBaseUrl(): String = "http://localhost:${upstream.port()}"
     protected fun apiBaseUrl(): String = "http://localhost:${Env.int(EnvVar.KtorApiPort)}"
+
+    protected fun createSession(id: String) {
+        val session = se.strawberry.repository.session.SessionRepository.Session(
+            id = id,
+            createdAt = System.currentTimeMillis(),
+            expiresAt = System.currentTimeMillis() + 3600_000, 
+            status = se.strawberry.repository.session.SessionRepository.Session.Status.ACTIVE
+        )
+        // Use repository to create in DB (LocalStack)
+        deps.sessionRepository.create(session)
+    }
 
     /**
      * Setup environment variables for the test
@@ -165,7 +169,7 @@ abstract class BaseIntegrationTest {
         // DynamoDB configuration pointing to LocalStack
         env.set(EnvVar.DynamoEndpoint.key, localstack.getEndpointOverride(Service.DYNAMODB).toString())
         env.set(EnvVar.AwsRegion.key, localstack.region)
-        env.set(EnvVar.DynamoSessionsTable.key, "proxy-sessions")
+        env.set(EnvVar.DynamoSessionsTable.key, SESSION_TABLE_NAME)
         env.set("AWS_ACCESS_KEY_ID", localstack.accessKey)
         env.set("AWS_SECRET_ACCESS_KEY", localstack.secretKey)
     }
@@ -193,7 +197,7 @@ abstract class BaseIntegrationTest {
             // Create sessions table
             dynamoClient.createTable(
                 CreateTableRequest.builder()
-                    .tableName("proxy-sessions")
+                    .tableName(SESSION_TABLE_NAME)
                     .attributeDefinitions(
                         AttributeDefinition.builder()
                             .attributeName("sessionId")
@@ -217,7 +221,7 @@ abstract class BaseIntegrationTest {
             // Create proxy-traffic table
             dynamoClient.createTable(
                 CreateTableRequest.builder()
-                    .tableName("proxy-traffic")
+                    .tableName(TRAFFIC_TABLE_NAME)
                     .attributeDefinitions(
                         AttributeDefinition.builder()
                             .attributeName("sessionId")
@@ -246,14 +250,14 @@ abstract class BaseIntegrationTest {
             // Scan and delete all items from sessions table
             val sessionsItems = dynamoClient.scan(
                 ScanRequest.builder()
-                    .tableName("proxy-sessions")
+                    .tableName(SESSION_TABLE_NAME)
                     .build()
             ).items()
 
             sessionsItems.forEach { item ->
                 dynamoClient.deleteItem(
                     DeleteItemRequest.builder()
-                        .tableName("proxy-sessions")
+                        .tableName(SESSION_TABLE_NAME)
                         .key(mapOf("sessionId" to item["sessionId"]))
                         .build()
                 )
@@ -262,14 +266,14 @@ abstract class BaseIntegrationTest {
             // Scan and delete all items from proxy-traffic table
             val trafficItems = dynamoClient.scan(
                 ScanRequest.builder()
-                    .tableName("proxy-traffic")
+                    .tableName(TRAFFIC_TABLE_NAME)
                     .build()
             ).items()
 
             trafficItems.forEach { item ->
                 dynamoClient.deleteItem(
                     DeleteItemRequest.builder()
-                        .tableName("proxy-traffic")
+                        .tableName(TRAFFIC_TABLE_NAME)
                         .key(mapOf("sessionId" to item["sessionId"]))
                         .build()
                 )

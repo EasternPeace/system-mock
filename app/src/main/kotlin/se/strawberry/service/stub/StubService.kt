@@ -1,7 +1,7 @@
 package se.strawberry.service.stub
 
 import com.github.tomakehurst.wiremock.http.Response
-import se.strawberry.domain.stub.CreateStubRequest
+import se.strawberry.api.models.stub.CreateStubRequest
 
 
 interface StubService {
@@ -13,5 +13,6 @@ interface StubService {
 
     /** Delete stub by id (delegates to underlying WireMock client). */
     fun delete(id: String): Response
+    fun syncFromDb()
 }
 

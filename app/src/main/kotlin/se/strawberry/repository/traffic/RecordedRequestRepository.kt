@@ -2,12 +2,11 @@ package se.strawberry.repository.traffic
 
 /**
  * Repository boundary for recorded requests.
- * R1.3: interface only; implementation will arrive in R4.
  */
 interface RecordedRequestRepository {
     data class RecordedRequest(
         val id: String,
-        val sessionId: String?,
+        val sessionId: String,
         val method: String,
         val path: String,
         val query: Map<String, String>,
@@ -17,6 +16,8 @@ interface RecordedRequestRepository {
         val responseHeaders: Map<String, String>,
         val responseBody: String?,
         val timestamp: Long,
+        val duration: Long,
+        val stubbed: Boolean
     )
 
     fun save(rr: RecordedRequest): Boolean

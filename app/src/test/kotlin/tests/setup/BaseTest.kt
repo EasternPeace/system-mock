@@ -4,25 +4,26 @@ import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.common.Slf4jNotifier
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import io.github.cdimascio.dotenv.dotenv
-import io.ktor.server.engine.EmbeddedServer
-import io.ktor.server.netty.NettyApplicationEngine
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInstance
-import se.strawberry.app.ServerBootstrap
-import uk.org.webcompere.systemstubs.jupiter.SystemStubsExtension
 import org.junit.jupiter.api.extension.ExtendWith
 import se.strawberry.app.KtorBootstrap
+import se.strawberry.app.ServerBootstrap
 import se.strawberry.app.buildDependencies
 import se.strawberry.config.AppConfigLoader
 import se.strawberry.config.Env
 import se.strawberry.config.EnvVar
 import uk.org.webcompere.systemstubs.environment.EnvironmentVariables
 import uk.org.webcompere.systemstubs.jupiter.SystemStub
+import uk.org.webcompere.systemstubs.jupiter.SystemStubsExtension
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 
@@ -35,6 +36,7 @@ abstract class BaseTest {
     protected lateinit var ktorApp: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>
     protected lateinit var http: OkHttpClient
     protected lateinit var upstreamServiceName: String
+    protected lateinit var deps: se.strawberry.app.AppDependencies
 
     @SystemStub
     protected val env = EnvironmentVariables()
@@ -49,9 +51,18 @@ abstract class BaseTest {
     @BeforeEach
     fun setUp() {
         loadEnv()
+        // Override ports with random available ports to avoid conflicts with running local app
+        val wmPort = findFreePort()
+        val apiPort = findFreePort()
+        val upstreamPort = findFreePort()
+        
+        env.set(EnvVar.WireMockServerPort.key, wmPort.toString())
+        env.set(EnvVar.KtorApiPort.key, apiPort.toString())
+        env.set(EnvVar.DynAllowedPorts.key, "$upstreamPort,80,443")
+
         upstream = WireMockServer(
             options()
-                .port(443) //one fro DYN_ALLOWED_PORTS
+                .port(upstreamPort)
                 .notifier(Slf4jNotifier(false))
                 .disableRequestJournal()
         )
@@ -61,11 +72,32 @@ abstract class BaseTest {
         env.set(EnvVar.ServiceMap.key, "$upstreamServiceName=${upstreamBaseUrl()}")
 
         // Start proxy (WireMock ingress)
-        proxy = ServerBootstrap.start()
+        // Start proxy (WireMock ingress)
+        // Start proxy (WireMock ingress)
+        val cfg = AppConfigLoader.load()
+        deps = buildDependencies(cfg)
+        
+        // Use Fake Stub Repository for tests (avoid requiring DDB)
+        val fakeRepo = helpers.FakeStubRepository()
+        val fakeSessionRepo = helpers.FakeSessionRepository()
+        
+        val testStubService = se.strawberry.service.stub.StubServiceImpl(
+            se.strawberry.common.Json.mapper, 
+            deps.wireMockClient, 
+            fakeRepo
+        )
+        // Also inject FakeSessionRepository into deps so DynamicRoutingGuard uses it
+        deps = deps.copy(
+            stubService = testStubService,
+            sessionRepository = fakeSessionRepo
+        )
+
+        val appScope = CoroutineScope(Dispatchers.Default)
+        deps.trafficPersister.start(appScope)
+
+        proxy = ServerBootstrap.start(cfg, deps)
 
         // Start Ktor API
-        val cfg = AppConfigLoader.load()
-        val deps = buildDependencies(cfg)
         ktorApp = KtorBootstrap.start(cfg, deps)
     }
 
@@ -86,10 +118,19 @@ abstract class BaseTest {
         }
     }
 
+    protected fun createSession(id: String) {
+        val session = se.strawberry.repository.session.SessionRepository.Session(
+            id = id,
+            createdAt = System.currentTimeMillis(),
+            expiresAt = System.currentTimeMillis() + 3600_000, // 1 hour
+            status = se.strawberry.repository.session.SessionRepository.Session.Status.ACTIVE
+        )
+        deps.sessionRepository.create(session)
+    }
 
-    fun call(sessionId: String?, endpoint: String): Response {
+    protected fun call(sessionId: String?, path: String): okhttp3.Response {
         val req = Request.Builder()
-            .url("${proxyBaseUrl()}$endpoint")
+            .url("${proxyBaseUrl()}$path")
             .addHeader("X-Mock-Target-Service", upstreamServiceName)
             .apply { if (sessionId != null) addHeader("X-Mock-Session-Id", sessionId) }
             .build()
@@ -100,6 +141,8 @@ abstract class BaseTest {
     protected fun proxyBaseUrl(): String = "http://localhost:${proxy.port()}"
     protected fun upstreamBaseUrl(): String = "http://localhost:${upstream.port()}"
     protected fun apiBaseUrl(): String = "http://localhost:${Env.int(EnvVar.KtorApiPort)}"
+    private fun findFreePort(): Int { ServerSocket(0).use { return it.localPort } }
+
     private fun loadEnv() {
         val dotenv = dotenv {
             filename = ".env.test"
