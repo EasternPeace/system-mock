@@ -1,40 +1,24 @@
 package tests.integration
 
-import com.fasterxml.jackson.module.kotlin.readValue
-import helpers.SessionApi
-import helpers.SessionResponse
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers.*
 import org.junit.jupiter.api.Test
-import se.strawberry.common.Json
 import se.strawberry.repository.RepositoryConstants.DYNAMO.SESSION_TABLE_NAME
 import se.strawberry.repository.session.SessionRepository
+import se.strawberry.support.base.BaseIntegrationApiTest
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue
-import tests.setup.BaseIntegrationTest
 
-/**
- * Integration tests for Session Creation API
- * Tests the full flow: API -> DynamoDB container
- */
-class TestApiSessionCrudOperations : BaseIntegrationTest() {
+class TestApiSessionCrudOperations : BaseIntegrationApiTest() {
 
     @Test
     fun `should create session with valid ID and ACTIVE status`() {
-        // Create session
-        val apiResponse = SessionApi.createSession(http, apiBaseUrl())
-        assertThat(apiResponse.code, equalTo(201))
+        val session = sessionClient.create()
 
-        val body = apiResponse.body.string()
-        val session = Json.mapper.readValue<SessionResponse>(body)
-
-        // Verify session data
         assertThat(session.id, not(emptyString()))
         assertThat(session.status, equalTo(SessionRepository.Session.Status.ACTIVE.name))
         assertThat(session.createdAt, greaterThan(0L))
 
-        // Verify the session exists in DynamoDB
-
-        val dbItem = dynamoClient.getItem { builder ->
+        val dbItem = dynamoClient().getItem { builder ->
             builder.tableName(SESSION_TABLE_NAME).key(
                 mapOf("sessionId" to AttributeValue.builder()
                     .s(session.id)
@@ -50,24 +34,12 @@ class TestApiSessionCrudOperations : BaseIntegrationTest() {
 
     @Test
     fun `should persist session to DynamoDB`() {
-        // Create session
-        val sessionId = SessionApi.createSession(http, apiBaseUrl())
-            .use { response ->
-                val body = response.body.string()
-                Json.mapper.readValue<SessionResponse>(body).id
-            }
+        val sessionId = sessionClient.create().id
 
-        // Verify session can be retrieved
-        SessionApi.getSession(http, apiBaseUrl(), sessionId)
-            .use { response ->
-                assertThat(response.code, equalTo(200))
+        val session = sessionClient.getBody(sessionId)
 
-                val body = response.body.string()
-                val session = Json.mapper.readValue<SessionResponse>(body)
-
-                assertThat(session.id, equalTo(sessionId))
-                assertThat(session.status, equalTo(SessionRepository.Session.Status.ACTIVE.name))
-            }
+        assertThat(session.id, equalTo(sessionId))
+        assertThat(session.status, equalTo(SessionRepository.Session.Status.ACTIVE.name))
     }
 
     @Test
@@ -75,51 +47,33 @@ class TestApiSessionCrudOperations : BaseIntegrationTest() {
         val sessionIds = mutableSetOf<String>()
         val iterations = 5
 
-        // Create 5 sessions
         repeat(iterations) {
-            SessionApi.createSession(http, apiBaseUrl())
-                .use { response ->
-                    assertThat(response.code, equalTo(201))
-
-                    val body = response.body.string()
-                    val session = Json.mapper.readValue<SessionResponse>(body)
-
-                    sessionIds.add(session.id)
-                }
+            sessionIds.add(sessionClient.create().id)
         }
 
-        // Verify all IDs are unique
         assertThat(sessionIds.size, equalTo(iterations))
 
-        // Verify all sessions are retrievable
         sessionIds.forEach { sessionId ->
-            SessionApi.getSession(http, apiBaseUrl(), sessionId)
-                .use { response ->
-                    assertThat(response.code, equalTo(200))
-                }
+            val response = sessionClient.get(sessionId)
+            assertThat(response.code, equalTo(200))
+            response.close()
         }
     }
 
     @Test
     fun `should return 404 for non-existent session`() {
-        val nonExistentSessionId = "non-existent-session-id"
-
-        SessionApi.getSession(http, apiBaseUrl(), nonExistentSessionId).use { response ->
-            assertThat(response.code, equalTo(404))
-        }
+        val response = sessionClient.get("non-existent-session-id")
+        assertThat(response.code, equalTo(404))
+        response.close()
     }
 
     @Test
     fun `should return 204 for closing session`() {
-        val sessionId = SessionApi.createSession(http, apiBaseUrl())
-            .use { response ->
-                val body = response.body.string()
-                Json.mapper.readValue<SessionResponse>(body).id
-            }
+        val sessionId = sessionClient.create().id
 
-        SessionApi.closeSession(http, apiBaseUrl(), sessionId).use { response ->
-            assertThat(response.code, equalTo(204))
-        }
+        val response = sessionClient.close(sessionId)
+        assertThat(response.code, equalTo(204))
+        response.close()
     }
 }
 
