@@ -1,14 +1,16 @@
 package tests
 
+import helpers.ProxyApi
 import com.github.tomakehurst.wiremock.client.WireMock.*
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.Test
-import se.strawberry.support.base.BaseApiTest
-import se.strawberry.support.fixtures.SessionFixtures
-import se.strawberry.support.fixtures.StubFixtures
+import se.strawberry.api.models.stub.Ephemeral
+import stubs.Stubs
+import tests.setup.BaseTest
+import kotlin.random.Random
 
-class TestStubbingOnlyWorksWithinTheSameSession : BaseApiTest() {
+class TestStubbingOnlyWorksWithinTheSameSession : BaseTest() {
 
     @Test
     fun test() {
@@ -17,11 +19,10 @@ class TestStubbingOnlyWorksWithinTheSameSession : BaseApiTest() {
         val stubBody = "stub-response"
         val endpoint = "/api/test"
         val stubStatus = 200
+        val sessionId = Random.hashCode().toString()
+        createSession(sessionId)
 
-        val session = SessionFixtures.createActiveSession()
-        createSessionInRepository(session.id)
-
-        servers.upstream.stubFor(
+        upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(aResponse()
                     .withStatus(upstreamStatus)
@@ -29,30 +30,36 @@ class TestStubbingOnlyWorksWithinTheSameSession : BaseApiTest() {
                 )
         )
 
-        val stub = StubFixtures.createEphemeralStubRequest(
-            path = endpoint,
+        val stub = Stubs.createStubRequest(
+            url = endpoint,
             status = stubStatus,
             bodyText = stubBody,
-            uses = 3
+            ephemeral = Ephemeral(uses = 3)
         )
 
-        val createResp = proxyClient.createStub(stub, session.id)
+        val createResp = ProxyApi.createStub(
+            client = http,
+            apiBaseUrl = apiBaseUrl(),
+            targetService = upstreamServiceName,
+            stub = stub,
+            sessionId = sessionId
+        )
+
         assertThat("Stub creation should be successful (${createResp.code})",
             createResp.code in listOf(200, 201), equalTo(true))
         createResp.close()
 
-        proxyClient.callEndpoint(endpoint, session.id).use { response ->
-            assertThat(response.code, equalTo(stubStatus))
-            assertThat(response.body.string(), equalTo(stubBody))
+        call(sessionId, endpoint).use { responseForCalWithKnownSession ->
+            assertThat(responseForCalWithKnownSession.code, equalTo(stubStatus))
+            assertThat(responseForCalWithKnownSession.body.string(), equalTo(stubBody))
         }
-
-        proxyClient.callEndpoint(endpoint, session.id).use { response ->
-            assertThat(response.code, equalTo(stubStatus))
-            assertThat(response.body.string(), equalTo(stubBody))
+        call(sessionId, endpoint).use { responseForCalWithKnownSession ->
+            assertThat(responseForCalWithKnownSession.code, equalTo(stubStatus))
+            assertThat(responseForCalWithKnownSession.body.string(), equalTo(stubBody))
         }
-
-        proxyClient.callEndpoint(endpoint, "unknown").use { response ->
-            assertThat(response.code, equalTo(403))
+        // Unknown session should be rejected (Hardened Logic)
+        call("unknown", endpoint).use { responseWithUnknownSession ->
+            assertThat(responseWithUnknownSession.code, equalTo(403))
         }
     }
 }
