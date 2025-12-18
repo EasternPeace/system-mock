@@ -1,35 +1,36 @@
 package tests
 
 import annotations.DecisionTableId
+import helpers.ProxyApi
 import com.github.tomakehurst.wiremock.client.WireMock.*
 import org.hamcrest.MatcherAssert.assertThat
 import org.hamcrest.Matchers.equalTo
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import se.strawberry.support.base.BaseApiTest
-import se.strawberry.support.fixtures.SessionFixtures
-import se.strawberry.support.fixtures.StubFixtures
+import se.strawberry.api.models.stub.Ephemeral
+import stubs.Stubs
+import tests.setup.BaseTest
 import kotlin.random.Random
 
-class TestEphemeralStubbing : BaseApiTest() {
-    private val upstreamStatus = 201
-    private val upstreamBody = "upstream-default-response"
-    private val stubBody = "stub-response"
-    private val endpoint = "/api/test"
-    private val stubStatus = 200
-    private lateinit var sessionId: String
+class TestEphemeralStubbing : BaseTest() {
+    val upstreamStatus = 201
+    val upstreamBody = "upstream-default-response"
+    val stubBody = "stub-response"
+    val endpoint = "/api/test"
+    val stubStatus = 200
+    val sessionId = "A-123"
 
-    @BeforeEach
+    @org.junit.jupiter.api.BeforeEach
     fun createTestSession() {
-        val session = SessionFixtures.createActiveSession("A-123")
-        sessionId = session.id
-        createSessionInRepository(sessionId)
+        createSession(sessionId)
     }
 
     @Test
     @DecisionTableId("EPH_1")
     fun shouldIgnoreTtlWhenUsesIsSetAndTtlIsNull() {
-        servers.upstream.stubFor(
+        val ttl = null
+        val uses = 3
+
+        upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(aResponse()
                     .withStatus(upstreamStatus)
@@ -37,17 +38,22 @@ class TestEphemeralStubbing : BaseApiTest() {
                 )
         )
 
-        val stub = StubFixtures.createEphemeralStubRequest(
-            path = endpoint,
+        val stub = Stubs.createStubRequest(
+            url = endpoint,
             status = stubStatus,
             bodyText = stubBody,
-            uses = 3,
-            ttlMs = null
+            ephemeral = Ephemeral(uses = uses, ttlMs = ttl)
         )
 
-        proxyClient.createStub(stub, sessionId).close()
+        ProxyApi.createStub(
+            client = http,
+            apiBaseUrl = apiBaseUrl(),
+            targetService = upstreamServiceName,
+            stub = stub,
+            sessionId = sessionId
+        ).close()
 
-        repeat(3) {
+        repeat(uses) {
             call(sessionId, endpoint).use { response ->
                 assertThat(response.code, equalTo(stubStatus))
                 assertThat(response.body.string(), equalTo(stubBody))
@@ -64,7 +70,10 @@ class TestEphemeralStubbing : BaseApiTest() {
     @Test
     @DecisionTableId("EPH_2")
     fun shouldApplyWhenBothSet() {
-        servers.upstream.stubFor(
+        val ttl = 5000L
+        val uses = 5
+
+        upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(aResponse()
                     .withStatus(upstreamStatus)
@@ -72,17 +81,22 @@ class TestEphemeralStubbing : BaseApiTest() {
                 )
         )
 
-        val stub = StubFixtures.createEphemeralStubRequest(
-            path = endpoint,
+        val stub = Stubs.createStubRequest(
+            url = endpoint,
             status = stubStatus,
             bodyText = stubBody,
-            uses = 5,
-            ttlMs = 5000
+            ephemeral = Ephemeral(uses = uses, ttlMs = ttl)
         )
 
-        proxyClient.createStub(stub, sessionId).close()
+        ProxyApi.createStub(
+            client = http,
+            apiBaseUrl = apiBaseUrl(),
+            targetService = upstreamServiceName,
+            stub = stub,
+            sessionId = sessionId
+        ).close()
 
-        repeat(5) {
+        repeat(uses) {
             call(sessionId, endpoint).use { response ->
                 assertThat(response.code, equalTo(stubStatus))
                 assertThat(response.body.string(), equalTo(stubBody))
@@ -93,7 +107,10 @@ class TestEphemeralStubbing : BaseApiTest() {
     @Test
     @DecisionTableId("EPH_3")
     fun shouldStopMatchingWhenNoUsesLeftWhenBothSet() {
-        servers.upstream.stubFor(
+        val ttl = 5000L
+        val uses = 3
+
+        upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(aResponse()
                     .withStatus(upstreamStatus)
@@ -101,17 +118,22 @@ class TestEphemeralStubbing : BaseApiTest() {
                 )
         )
 
-        val stub = StubFixtures.createEphemeralStubRequest(
-            path = endpoint,
+        val stub = Stubs.createStubRequest(
+            url = endpoint,
             status = stubStatus,
             bodyText = stubBody,
-            uses = 3,
-            ttlMs = 5000
+            ephemeral = Ephemeral(uses = uses, ttlMs = ttl)
         )
 
-        proxyClient.createStub(stub, sessionId).close()
+       ProxyApi.createStub(
+            client = http,
+            apiBaseUrl = apiBaseUrl(),
+            targetService = upstreamServiceName,
+            stub = stub,
+            sessionId = sessionId
+        ).close()
 
-        repeat(3) {
+        repeat(uses) {
             call(sessionId, endpoint).use { response ->
                 assertThat(response.code, equalTo(stubStatus))
                 assertThat(response.body.string(), equalTo(stubBody))
@@ -128,8 +150,9 @@ class TestEphemeralStubbing : BaseApiTest() {
     @DecisionTableId("EPH_4")
     fun shouldStopMatchingWhenTtlExpiresWhenBothSet() {
         val ttl = 2000L
+        val uses = 5
 
-        servers.upstream.stubFor(
+        upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(aResponse()
                     .withStatus(upstreamStatus)
@@ -137,17 +160,22 @@ class TestEphemeralStubbing : BaseApiTest() {
                 )
         )
 
-        val stub = StubFixtures.createEphemeralStubRequest(
-            path = endpoint,
+        val stub = Stubs.createStubRequest(
+            url = endpoint,
             status = stubStatus,
             bodyText = stubBody,
-            uses = 5,
-            ttlMs = ttl
+            ephemeral = Ephemeral(uses = uses, ttlMs = ttl)
         )
 
-        proxyClient.createStub(stub, sessionId).close()
+        ProxyApi.createStub(
+            client = http,
+            apiBaseUrl = apiBaseUrl(),
+            targetService = upstreamServiceName,
+            stub = stub,
+            sessionId = sessionId
+        ).close()
 
-        val callsBeforeExpiry = Random.nextInt(1, 5)
+        val callsBeforeExpiry = Random.nextInt(1, uses)
         repeat(callsBeforeExpiry) {
             call(sessionId, endpoint).use { response ->
                 assertThat(response.code, equalTo(stubStatus))
@@ -167,8 +195,9 @@ class TestEphemeralStubbing : BaseApiTest() {
     @DecisionTableId("EPH_5")
     fun shouldIgnoreUsesWhenTtlIsSetAndUsesAreNull() {
         val ttl = 2000L
+        val uses = null
 
-        servers.upstream.stubFor(
+        upstream.stubFor(
             get(urlEqualTo(endpoint))
                 .willReturn(aResponse()
                     .withStatus(upstreamStatus)
@@ -176,15 +205,20 @@ class TestEphemeralStubbing : BaseApiTest() {
                 )
         )
 
-        val stub = StubFixtures.createEphemeralStubRequest(
-            path = endpoint,
+        val stub = Stubs.createStubRequest(
+            url = endpoint,
             status = stubStatus,
             bodyText = stubBody,
-            uses = 1,
-            ttlMs = ttl
+            ephemeral = Ephemeral(uses = uses, ttlMs = ttl)
         )
 
-        proxyClient.createStub(stub, sessionId).close()
+      ProxyApi.createStub(
+            client = http,
+            apiBaseUrl = apiBaseUrl(),
+            targetService = upstreamServiceName,
+            stub = stub,
+            sessionId = sessionId
+        ).close()
 
         repeat(Random.nextInt(1, 5)) {
             call(sessionId, endpoint).use { response ->
